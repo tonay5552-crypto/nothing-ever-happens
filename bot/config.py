@@ -1,11 +1,18 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
 SUPPORTED_RUNTIME = "nothing_happens"
+
+DEFAULT_CATEGORIES_BLACKLIST: tuple[str, ...] = (
+    "sports",
+    "nba",
+    "nfl",
+    "football",
+)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -134,6 +141,34 @@ class NothingHappensConfig:
     max_new_positions: int = -1
     shutdown_on_max_new_positions: bool = False
     redeemer_interval_sec: int = 1800
+    # New risk / filter knobs (tunable by the autoresearch optimizer).
+    # ``no_price_cap`` and ``position_size_pct`` default to 0.0 which is
+    # interpreted as "unset, fall back to the legacy knobs above"; config.json
+    # and the optimizer both set positive values explicitly.
+    no_price_cap: float = 0.0
+    min_market_days: int = 30
+    max_open_positions_pct: float = 40.0
+    position_size_pct: float = 0.0
+    exit_threshold: float = 0.85
+    categories_blacklist: tuple[str, ...] = DEFAULT_CATEGORIES_BLACKLIST
+    max_trade_count_per_day: int = 5
+
+    @property
+    def effective_price_cap(self) -> float:
+        """The effective NO-leg entry price cap. Prefers the new ``no_price_cap``
+        knob; falls back to the legacy ``max_entry_price`` field when unset."""
+        if 0 < self.no_price_cap < 1.0:
+            return self.no_price_cap
+        return self.max_entry_price
+
+    @property
+    def effective_cash_pct_per_trade(self) -> float:
+        """Position sizing as a fraction of available cash. Prefers the new
+        ``position_size_pct`` knob (percent), otherwise the legacy
+        ``cash_pct_per_trade`` fraction."""
+        if self.position_size_pct > 0:
+            return max(0.0001, min(1.0, self.position_size_pct / 100.0))
+        return self.cash_pct_per_trade
 
 
 def load_nothing_happens_config() -> tuple[ExchangeConfig, NothingHappensConfig]:
@@ -214,9 +249,52 @@ def _load_nothing_happens_config(
             "PM_NH_REDEEMER_INTERVAL_SEC",
             int(strat.get("redeemer_interval_sec", 1800)),
         ),
+        no_price_cap=_env_float(
+            "PM_NH_NO_PRICE_CAP",
+            float(strat.get("no_price_cap", 0.0)),
+        ),
+        min_market_days=_env_int(
+            "PM_NH_MIN_MARKET_DAYS",
+            int(strat.get("min_market_days", 30)),
+        ),
+        max_open_positions_pct=_env_float(
+            "PM_NH_MAX_OPEN_POSITIONS_PCT",
+            float(strat.get("max_open_positions_pct", 40.0)),
+        ),
+        position_size_pct=_env_float(
+            "PM_NH_POSITION_SIZE_PCT",
+            float(strat.get("position_size_pct", 0.0)),
+        ),
+        exit_threshold=_env_float(
+            "PM_NH_EXIT_THRESHOLD",
+            float(strat.get("exit_threshold", 0.85)),
+        ),
+        categories_blacklist=_parse_categories_blacklist(
+            strat.get("categories_blacklist"),
+        ),
+        max_trade_count_per_day=_env_int(
+            "PM_NH_MAX_TRADE_COUNT_PER_DAY",
+            int(strat.get("max_trade_count_per_day", 5)),
+        ),
     )
     _validate_nothing_happens_config(strategy)
     return exchange, strategy
+
+
+def _parse_categories_blacklist(value: Any) -> tuple[str, ...]:
+    env_override = os.getenv("PM_NH_CATEGORIES_BLACKLIST")
+    if env_override:
+        parts = [p.strip().lower() for p in env_override.split(",") if p.strip()]
+        return tuple(parts) if parts else DEFAULT_CATEGORIES_BLACKLIST
+    if value is None:
+        return DEFAULT_CATEGORIES_BLACKLIST
+    if isinstance(value, str):
+        parts = [p.strip().lower() for p in value.split(",") if p.strip()]
+        return tuple(parts) if parts else DEFAULT_CATEGORIES_BLACKLIST
+    if isinstance(value, (list, tuple)):
+        parts = [str(p).strip().lower() for p in value if str(p).strip()]
+        return tuple(parts) if parts else DEFAULT_CATEGORIES_BLACKLIST
+    raise ValueError("categories_blacklist must be a list of strings")
 
 
 def _validate_nothing_happens_config(cfg: NothingHappensConfig) -> None:
@@ -262,3 +340,23 @@ def _validate_nothing_happens_config(cfg: NothingHappensConfig) -> None:
         raise ValueError(f"max_new_positions must be >= -1, got {cfg.max_new_positions}")
     if cfg.redeemer_interval_sec < 60:
         raise ValueError(f"redeemer_interval_sec must be >= 60, got {cfg.redeemer_interval_sec}")
+    # ``no_price_cap`` and ``position_size_pct`` accept 0.0 as the sentinel
+    # meaning "unset, fall back to legacy knobs".
+    if cfg.no_price_cap and not (0 < cfg.no_price_cap <= 1.0):
+        raise ValueError(f"no_price_cap must be in (0, 1.0], got {cfg.no_price_cap}")
+    if cfg.min_market_days < 0:
+        raise ValueError(f"min_market_days must be >= 0, got {cfg.min_market_days}")
+    if not (0 < cfg.max_open_positions_pct <= 100.0):
+        raise ValueError(
+            f"max_open_positions_pct must be in (0, 100], got {cfg.max_open_positions_pct}"
+        )
+    if cfg.position_size_pct and not (0 < cfg.position_size_pct <= 100.0):
+        raise ValueError(
+            f"position_size_pct must be in (0, 100], got {cfg.position_size_pct}"
+        )
+    if not (0 < cfg.exit_threshold <= 1.0):
+        raise ValueError(f"exit_threshold must be in (0, 1.0], got {cfg.exit_threshold}")
+    if cfg.max_trade_count_per_day < 0:
+        raise ValueError(
+            f"max_trade_count_per_day must be >= 0, got {cfg.max_trade_count_per_day}"
+        )

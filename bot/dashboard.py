@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -24,6 +25,10 @@ RESOLUTION_POLL_INTERVAL_SEC = 15.0
 TRADE_HISTORY_LIMIT = 1000
 BALANCE_HISTORY_LIMIT = 2880
 
+# Autoresearch artifacts produced by optimizer.py — served read-only by the
+# dashboard so operators can watch optimization progress in real time.
+OPTIMIZER_WORK_DIR = Path(os.getenv("OPTIMIZER_WORK_DIR", "artifacts/optimizer"))
+
 
 class DashboardServer:
     def __init__(
@@ -34,12 +39,16 @@ class DashboardServer:
         exchange=None,
         portfolio_state=None,
         nothing_happens_control: NothingHappensControlState | None = None,
+        strategy_config=None,
+        live_send_enabled: bool = False,
     ):
         self.host = host
         self.port = port
         self._exchange = exchange
         self._portfolio_state = portfolio_state
         self._nothing_happens_control = nothing_happens_control
+        self._strategy_config = strategy_config
+        self._live_send_enabled = bool(live_send_enabled)
         self._clients: set[web.WebSocketResponse] = set()
         self._last_portfolio_version = -1
         self._last_nothing_happens_control_version = -1
@@ -322,11 +331,80 @@ class DashboardServer:
             except Exception as exc:
                 logger.debug("Resolution fetch failed for %s: %s", slug, exc)
 
+    async def _api_status(self, request: web.Request) -> web.Response:
+        bot_mode = os.getenv("BOT_MODE", "paper").strip().lower()
+        live_trading = os.getenv("LIVE_TRADING_ENABLED", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        dry_run = os.getenv("DRY_RUN", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        effective_mode = "live" if self._live_send_enabled else "paper"
+        return web.json_response(
+            {
+                "bot_mode_env": bot_mode,
+                "live_trading_enabled_env": live_trading,
+                "dry_run_env": dry_run,
+                "effective_mode": effective_mode,
+                "starting_balance": self._starting_balance,
+                "current_balance": self._current_balance,
+                "clients_connected": len(self._clients),
+                "trade_ledger_path": self._ledger_path,
+                "optimizer_work_dir": str(OPTIMIZER_WORK_DIR),
+            }
+        )
+
+    async def _api_config(self, request: web.Request) -> web.Response:
+        if self._strategy_config is None:
+            return web.json_response({"error": "strategy config unavailable"}, status=503)
+        if dataclasses.is_dataclass(self._strategy_config):
+            payload = dataclasses.asdict(self._strategy_config)
+        else:
+            payload = dict(self._strategy_config)
+        # asdict drops @property fields; re-add the effective knobs for UI.
+        if hasattr(self._strategy_config, "effective_price_cap"):
+            payload["effective_price_cap"] = self._strategy_config.effective_price_cap
+        if hasattr(self._strategy_config, "effective_cash_pct_per_trade"):
+            payload["effective_cash_pct_per_trade"] = (
+                self._strategy_config.effective_cash_pct_per_trade
+            )
+        return web.json_response(payload, dumps=lambda v: json.dumps(v, default=str))
+
+    async def _api_backtest(self, request: web.Request) -> web.Response:
+        kind = request.match_info.get("kind", "latest")
+        filename = {
+            "latest": "latest.json",
+            "best": "best_configs.json",
+            "baseline": "baseline.json",
+        }.get(kind)
+        if filename is None:
+            return web.json_response({"error": "unknown artifact"}, status=404)
+        path = OPTIMIZER_WORK_DIR / filename
+        if not path.exists():
+            return web.json_response(
+                {"error": "no artifact yet — run optimizer.py first"}, status=404
+            )
+        try:
+            with path.open() as f:
+                return web.json_response(json.load(f))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Backtest artifact read failed: %s", exc)
+            return web.json_response({"error": str(exc)}, status=500)
+
     async def run(self) -> None:
         app = web.Application()
         app.router.add_get("/", self._index)
         app.router.add_get("/nothingeverhappens.svg", self._background_image)
         app.router.add_get("/ws", self._ws_handler)
+        app.router.add_get("/api/status", self._api_status)
+        app.router.add_get("/api/config", self._api_config)
+        app.router.add_get("/api/backtest/{kind}", self._api_backtest)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()

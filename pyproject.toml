@@ -1,0 +1,48 @@
+[project]
+name = "nothing-ever-happens"
+version = "0.2.0"
+description = "Risk-managed Polymarket 'No' bias bot with backtesting and Karpathy-style autoresearch optimization."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+
+dependencies = [
+    # Core runtime (original)
+    "py-clob-client==0.34.6",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "sqlalchemy>=2.0.0,<3.0.0",
+    "psycopg2-binary>=2.9.0,<3.0.0",
+    "python-json-logger>=2.0.0,<3.0.0",
+    "web3>=7.10.0,<8.0.0",
+    "aiohttp>=3.9.0,<4.0.0",
+    # Backtest / optimizer stack
+    "pandas>=2.2,<3.0",
+    "polars>=1.0,<2.0",
+    "pyarrow>=15.0,<21.0",
+    "numpy>=1.26,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<1.0",
+    "ruff>=0.4,<1.0",
+]
+
+[project.scripts]
+nothing-ever-happens = "bot.main:main"
+nothing-ever-happens-backtest = "backtest:main"
+nothing-ever-happens-optimize = "optimizer:main"
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["bot"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q"
+testpaths = ["tests"]
+asyncio_mode = "auto"

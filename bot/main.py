@@ -163,10 +163,19 @@ async def run():
             portfolio_state=portfolio_state,
             nothing_happens_control=nothing_happens_control,
             port=int(dashboard_port),
+            host=os.getenv("DASHBOARD_HOST", "0.0.0.0"),
             exchange=exchange,
+            strategy_config=strategy_cfg,
+            live_send_enabled=exchange_cfg.live_send_enabled,
         )
         dashboard_task = asyncio.create_task(dashboard.run(), name="dashboard")
-        logger.info("dashboard_starting", extra={"port": int(dashboard_port)})
+        logger.info(
+            "dashboard_starting",
+            extra={
+                "port": int(dashboard_port),
+                "mode": "live" if exchange_cfg.live_send_enabled else "paper",
+            },
+        )
 
     shutdown = asyncio.Event()
 
