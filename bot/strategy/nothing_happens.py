@@ -619,7 +619,7 @@ class NothingHappensRuntime:
                 return
 
         no_ask = _best_ask(book)
-        if no_ask <= 0 or no_ask > self.cfg.max_entry_price:
+        if no_ask <= 0 or no_ask > self.cfg.effective_price_cap:
             self._market_in_range_by_slug[market.slug] = False
             self._schedule_backoff(market.slug, failed=False)
             return
@@ -703,7 +703,7 @@ class NothingHappensRuntime:
                 return False
 
         no_ask = _best_ask(book)
-        if no_ask <= 0 or no_ask > self.cfg.max_entry_price:
+        if no_ask <= 0 or no_ask > self.cfg.effective_price_cap:
             self._pending_entries_by_slug.pop(slug, None)
             self._schedule_backoff(slug, failed=False)
             return False
@@ -807,11 +807,11 @@ class NothingHappensRuntime:
         enforce_risk: bool,
     ) -> EntryPlan | None:
         no_ask = _best_ask(book)
-        if no_ask <= 0 or no_ask > self.cfg.max_entry_price:
+        if no_ask <= 0 or no_ask > self.cfg.effective_price_cap:
             return None
 
         submitted_buy_price = self._submitted_buy_price(no_ask)
-        safe_notional = _max_notional_within_price(book, self.cfg.max_entry_price)
+        safe_notional = _max_notional_within_price(book, self.cfg.effective_price_cap)
         if safe_notional <= 0:
             return None
 
@@ -938,7 +938,7 @@ class NothingHappensRuntime:
                             amount=target_notional,
                             reference_price=no_ask,
                             allowed_slippage=self.cfg.allowed_slippage,
-                            price_cap=self.cfg.max_entry_price,
+                            price_cap=self.cfg.effective_price_cap,
                         ),
                     ),
                     timeout=25.0,
@@ -1230,7 +1230,7 @@ class NothingHappensRuntime:
                 filled_shares = _safe_float(row.get("resolved_filled_shares"))
                 fill_price = _safe_float(
                     row.get("resolved_fill_price") or row.get("reference_price"),
-                    self.cfg.max_entry_price,
+                    self.cfg.effective_price_cap,
                 )
                 spent_usd = _safe_float(row.get("resolved_spent_usd"))
                 if spent_usd <= 0.0 and fill_price > 0.0 and filled_shares > 0.0:
@@ -1265,7 +1265,7 @@ class NothingHappensRuntime:
             return False
         if balance <= BALANCE_DUST_THRESHOLD:
             return False
-        avg_price = target_notional / balance if balance > 0 else self.cfg.max_entry_price
+        avg_price = target_notional / balance if balance > 0 else self.cfg.effective_price_cap
         self._record_local_fill(
             market=market,
             size=balance,
@@ -1360,8 +1360,8 @@ class NothingHappensRuntime:
                     self.shutdown_event.set()
 
     def _submitted_buy_price(self, reference_price: float) -> float:
-        if self.cfg.max_entry_price > 0:
-            return _clamp_probability(self.cfg.max_entry_price)
+        if self.cfg.effective_price_cap > 0:
+            return _clamp_probability(self.cfg.effective_price_cap)
         return _clamp_probability(reference_price + self.cfg.allowed_slippage)
 
     def _target_notional(
@@ -1375,7 +1375,7 @@ class NothingHappensRuntime:
         base_notional = (
             self.cfg.fixed_trade_amount
             if self.cfg.fixed_trade_amount > 0
-            else max(cash_balance * self.cfg.cash_pct_per_trade, self.cfg.min_trade_amount)
+            else max(cash_balance * self.cfg.effective_cash_pct_per_trade, self.cfg.min_trade_amount)
         )
         minimum_shares = max(0.0, market_min_order_size, book_min_order_size)
         if minimum_shares <= 0 or submitted_price <= 0:

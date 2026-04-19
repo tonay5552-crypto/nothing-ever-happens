@@ -10,10 +10,8 @@
       "price_poll_interval_sec": 60,
       "position_sync_interval_sec": 60,
       "order_dispatch_interval_sec": 60,
-      "cash_pct_per_trade": 0.02,
       "min_trade_amount": 5,
       "fixed_trade_amount": 0,
-      "max_entry_price": 0.65,
       "allowed_slippage": 0.3,
       "request_concurrency": 4,
       "buy_retry_count": 3,
@@ -21,7 +19,24 @@
       "max_backoff_sec": 900,
       "max_new_positions": -1,
       "shutdown_on_max_new_positions": false,
-      "redeemer_interval_sec": 1800
+      "redeemer_interval_sec": 1800,
+
+      "no_price_cap": 0.60,
+      "min_market_days": 30,
+      "max_open_positions_pct": 40,
+      "position_size_pct": 2.0,
+      "exit_threshold": 0.85,
+      "categories_blacklist": ["sports", "nba", "nfl", "football"],
+      "max_trade_count_per_day": 5
     }
+  },
+  "backtest": {
+    "dataset": "jon-becker/prediction-market-analysis",
+    "data_dir": "data/polymarket",
+    "taker_fee_pct": 0.5,
+    "slippage_pct": 0.2,
+    "starting_bankroll_usd": 10000.0,
+    "walk_forward_splits": 4,
+    "min_hold_days": 1
   }
 }
